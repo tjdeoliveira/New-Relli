@@ -6,7 +6,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     envVars:
-      - key: NRAK-75C6I503C080UJ60CA73CH1XBTT
+      - key: NEW_RELIC_API_KEY
         sync: false
-      - key: 1896682
+      - key: NEW_RELIC_ACCOUNT_ID
         sync: false
