@@ -38,7 +38,7 @@ def index():
             "query": f"""{{
               actor {{
                 account(id: {ACCOUNT_ID}) {{
-                  nrql(query: "SELECT chat.id, status.code, status.description FROM Log WHERE (type = 'SENT_MESSAGE_STATUS' OR type = 'SENT_MESSAGE' OR type = 'SENT_ALL_MESSAGE') AND message.id IN ({message_id}) SINCE 7 days ago UNTIL now") {{
+                  nrql(query: "SELECT chat.id, status.code, status.description FROM Log WHERE (type = 'SENT_MESSAGE_STATUS' OR type = 'SENT_MESSAGE' OR type = 'SENT_ALL_MESSAGE') AND message.id IN ({message_id}) SINCE 1 month ago UNTIL now") {{
                     results
                   }}
                 }}
