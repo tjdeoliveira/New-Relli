@@ -392,6 +392,200 @@ def csv_download():
 
     return render_template_string(HTML_CSV_DOWNLOAD, error=error, results=results)
 
+# --- ROTA: Relatório Huggy (Flask) ---
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import tempfile
+import io
+from flask import send_file
+
+# HEADERS JIRA (mantive o mesmo Basic token que você usou antes)
+HEADERS = {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    'Authorization': 'Basic dGhpYWdvLm9saXZlaXJhQGh1Z2d5LmlvOkFUQVRUM3hGZkdGMDcyNFBUR0luTDRhN0JUOGNja2Yta0R4a0hjR1ZUQnBCT3NRR1Y2ektPaGJLbmpHSlZhMEp5NE4xaFBQXzk1NmRkSF9QN01HdXdZR0drWl9HcEc0QUo4UnhFRGdyTlUyano0UkdGM1c1WGpQYU9XN0lRS2VDcHpiVjQ3SzJoM2NZTTYzeVB6bUlHLWMzSG9MSTkxZTNkcXVkMHRQbWcweThRa0pGdV9VLVBXQT00N0Q4NDVGMQ=='
+}
+
+HTML_RELATORIO = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Relatório Huggy</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#f7f9fb;padding:30px;color:#222}
+    .card{background:#fff;padding:18px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.06);max-width:780px}
+    input, label {display:block;margin-bottom:10px}
+    input[type="date"], input[type="file"]{padding:8px;width:320px}
+    button{padding:10px 14px;background:#0066cc;color:#fff;border:none;border-radius:6px;cursor:pointer}
+    .nav{margin-bottom:12px}
+    .nav a{margin-right:8px;color:#0066cc;text-decoration:none}
+    .info{margin-top:12px;padding:10px;background:#eef6ff;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="nav">
+      <a href="/">Consulta Message ID</a> | <a href="/csv-download">CSV Download</a> | <strong>Relatório Huggy</strong>
+    </div>
+    <h2>Gerar Relatório de Atendimentos</h2>
+    <form method="post" enctype="multipart/form-data">
+      <label>Data inicial</label>
+      <input type="date" name="start_date" required>
+      <label>Data final</label>
+      <input type="date" name="end_date" required>
+      <label>Arquivo Data (.xlsx) - planilha "Data"</label>
+      <input type="file" name="data_file" accept=".xlsx" required>
+      <div style="margin-top:10px">
+        <button type="submit">Gerar e Baixar Excel</button>
+      </div>
+    </form>
+
+    {% if error %}
+      <div class="info" style="color:#a00">{{ error }}</div>
+    {% endif %}
+    {% if info %}
+      <div class="info">{{ info }}</div>
+    {% endif %}
+  </div>
+</body>
+</html>
+"""
+
+def get_jql_total(url):
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return 0
+        data = resp.json()
+        return len(data.get('issues', []))
+    except Exception:
+        return 0
+
+@app.route('/relatorio-huggy', methods=['GET', 'POST'])
+def relatorio_huggy():
+    error = None
+    info = None
+
+    if request.method == 'POST':
+        # inputs
+        start_date = request.form.get('start_date')
+        end_date = request.form.get('end_date')
+        uploaded = request.files.get('data_file')
+
+        if not start_date or not end_date:
+            error = "As datas inicial e final são obrigatórias."
+            return render_template_string(HTML_RELATORIO, error=error, info=None)
+
+        try:
+            dt_start = datetime.strptime(start_date, "%Y-%m-%d")
+            dt_end = datetime.strptime(end_date, "%Y-%m-%d")
+        except Exception as e:
+            error = "Formato de data inválido."
+            return render_template_string(HTML_RELATORIO, error=error, info=None)
+
+        if dt_start > dt_end:
+            error = "A data inicial não pode ser maior que a final."
+            return render_template_string(HTML_RELATORIO, error=error, info=None)
+
+        if uploaded is None or uploaded.filename == "":
+            error = "Envie o arquivo data_file (.xlsx)."
+            return render_template_string(HTML_RELATORIO, error=error, info=None)
+
+        # salvar arquivo temporário em memória
+        try:
+            df_data = pd.read_excel(uploaded, sheet_name='Data')
+        except Exception as e:
+            error = f"Erro ao ler o arquivo enviado: {e}"
+            return render_template_string(HTML_RELATORIO, error=error, info=None)
+
+        # lógica do relatório (mesma do script original)
+        agentes_desejados = [
+            'rayane.souza@huggy.io', 'antonio.carlos@huggy.io', 'henrique.ramos@huggy.io',
+            'alexandre.melo@huggy.io', 'jose.sandoval@huggy.io', 'davi.nascimento@huggy.io',
+            'joao.batista@huggy.io', 'thiago.oliveira@huggy.io', 'marcos.bebiano@huggy.io'
+        ]
+
+        df_filtrado = df_data[df_data['agent_login'].isin(agentes_desejados)].copy()
+        total_chats = len(df_filtrado)
+
+        df_filtrado['nota_2025'] = pd.to_numeric(df_filtrado.get('nota_2025', pd.Series()), errors='coerce')
+        notas_validas = df_filtrado['nota_2025'].dropna()
+        notas_validas = notas_validas[notas_validas != 0]
+
+        media = round(notas_validas.mean(), 2) if not notas_validas.empty else 0
+        mediana = round(notas_validas.median(), 2) if not notas_validas.empty else 0
+
+        # JQLs (usando strings YYYY-MM-DD)
+        start_str = dt_start.strftime("%Y-%m-%d")
+        end_str = dt_end.strftime("%Y-%m-%d")
+        mes_anterior = (dt_end - relativedelta(months=1)).strftime('%Y-%m-%d')
+
+        JQL_URLS = {
+            'abertos_semana': f'https://huggysupport.atlassian.net/rest/api/3/search/jql?jql=created >= "{start_str}" AND created <= "{end_str}" AND project IN (AT, HUG)&fields=key',
+            'fechados_semana': f'https://huggysupport.atlassian.net/rest/api/3/search/jql?jql=statuscategorychangeddate >= "{start_str}" AND statuscategorychangeddate <= "{end_str}" AND status IN (Closed, Completed, Done, Canceled, Resolved, Declined, Reproved, "Resolvido N2", Failed, Published)&fields=key',
+            'abertos_30dias': f'https://huggysupport.atlassian.net/rest/api/3/search/jql?jql=project IN (AT, HUG) AND status IN ("Analysis by Support", Escalated, "In Analysis", "In Development", "On Roadmap to Dev", Open, "Queue for Analysis", "Waiting for customer", "Work in progress", "Waiting for Information", "Tarefa Tickets", Analyzing, "In Development Partners", Opened, Pending, Reopened) AND created >= "2012-01-01" AND created <= "{mes_anterior}"&fields=key',
+            'abertos_15dias': f'https://huggysupport.atlassian.net/rest/api/3/search/jql?jql=project IN (AT, HUG) AND status IN ("Analysis by Support", Escalated, "In Analysis", "In Development", "On Roadmap to Dev", Open, "Queue for Analysis", "Waiting for customer", "Work in progress", "Waiting for Information", "Tarefa Tickets", Analyzing, "In Development Partners", Opened, Pending, Reopened) AND created >= "2012-01-01" AND created <= "{(dt_end - timedelta(days=15)).strftime("%Y-%m-%d")}"&fields=key',
+            'total_abertos': 'https://huggysupport.atlassian.net/rest/api/3/search/jql?jql=project IN (AT, HUG) AND status NOT IN (Closed, Done, Resolved, Reproved, "Resolvido N2", Canceled)&fields=key'
+        }
+
+        tickets_abertos_semana = get_jql_total(JQL_URLS['abertos_semana'])
+        tickets_fechados_semana = get_jql_total(JQL_URLS['fechados_semana'])
+        tickets_abertos_15dias = get_jql_total(JQL_URLS['abertos_15dias'])
+        tickets_abertos_30dias = get_jql_total(JQL_URLS['abertos_30dias'])
+        total_tickets_abertos = get_jql_total(JQL_URLS['total_abertos'])
+
+        # checar base.xlsx na raiz do projeto
+        BASE_FILE = 'base.xlsx'
+        if not os.path.exists(BASE_FILE):
+            error = "Arquivo base.xlsx não encontrado no servidor (coloque base.xlsx na raiz do deploy)."
+            return render_template_string(HTML_RELATORIO, error=error, info=None)
+
+        try:
+            wb = load_workbook(BASE_FILE)
+            ws = wb['Resultado']
+
+            ws['B1'] = media
+            ws['B2'] = mediana
+            ws['B4'] = total_chats
+            ws['B6'] = tickets_abertos_semana
+            ws['B8'] = tickets_fechados_semana
+            ws['B10'] = tickets_abertos_15dias
+            ws['B11'] = tickets_abertos_30dias
+            ws['B13'] = total_tickets_abertos
+            ws['A15'] = f"Semana do dia {dt_start.strftime('%d/%m')} a {dt_end.strftime('%d/%m')}"
+
+            if 'Data' in wb.sheetnames:
+                wb.remove(wb['Data'])
+            ws_data = wb.create_sheet('Data')
+            for r in dataframe_to_rows(df_data, index=False, header=True):
+                ws_data.append(r)
+
+            # salvar em BytesIO para enviar como download
+            bio = io.BytesIO()
+            wb.save(bio)
+            wb.close()
+            bio.seek(0)
+
+            filename = f"Atendimentos_{dt_start.strftime('%d')}_a_{dt_end.strftime('%d')}_de_{dt_end.strftime('%B')}.xlsx"
+            return send_file(
+                bio,
+                as_attachment=True,
+                download_name=filename,
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+        except Exception as e:
+            error = f"Erro ao gerar relatório: {e}"
+            return render_template_string(HTML_RELATORIO, error=error, info=None)
+
+    # GET
+    return render_template_string(HTML_RELATORIO, error=None, info=None)
+
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
+
